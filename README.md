@@ -1,16 +1,43 @@
-# Shadow Dodge
+# Neon Drift Dodge
 
-Shadow Dodge is a small browser arcade game built with plain HTML, CSS, and JavaScript. You control a glowing blue square at the bottom of the arena while red shadow blocks fall from above.
+Neon Drift Dodge is a polished second version of the original mini-game demo. It is still built with only plain HTML, CSS, and JavaScript, but now plays more like a small arcade game with screens, health, collectibles, combo scoring, difficulty scaling, effects, and saved best scores.
 
 ## Gameplay
 
-- Press **Start Game** to begin.
-- Move left with **ArrowLeft** and right with **ArrowRight**.
-- Avoid all red falling blocks.
-- Your score increases once per second.
-- The falling speed and spawn pressure increase over time.
-- If a red block touches the player, the game ends and your final score is shown.
-- Press **Restart** to play again.
+- Press **Start Run** on the title screen to begin.
+- Drift left and right to dodge falling red hazards.
+- Collect glowing blue and yellow energy orbs to increase your score.
+- Keep collecting orbs without getting hit to build a combo multiplier.
+- You start with **3 hearts**. A red hazard removes one heart instead of ending the game instantly.
+- The game ends when all hearts are gone.
+- Your best score is saved in `localStorage` and shown on the HUD and game over screen.
+
+## Controls
+
+| Action | Keys |
+| --- | --- |
+| Move left | **ArrowLeft** or **A** |
+| Move right | **ArrowRight** or **D** |
+| Pause / resume | **P** |
+| Restart after game over | Click **Restart Run** |
+
+## Version 2 features
+
+- Title screen with instructions and a start button.
+- Smooth movement with acceleration, friction, and responsive edge clamping.
+- Three red hazard types:
+  - normal red blocks,
+  - fast thin blocks,
+  - large slow blocks.
+- Blue and yellow collectible energy orbs with different point values.
+- 3-heart health system with temporary invulnerability after a hit.
+- Hit feedback with player flashing, red particles, and screen shake.
+- Particle bursts when collecting orbs.
+- Difficulty scaling that increases threat level, hazard speed, and spawn pressure over time.
+- Combo scoring for orb streaks without getting hit.
+- Pause and resume with the **P** key.
+- Improved game over screen with final score, best score, and new-best messaging.
+- Dark neon arcade visuals, animated starfield/grid background, polished HUD, and improved buttons.
 
 ## Run locally
 
@@ -24,6 +51,6 @@ Then visit `http://localhost:8000` in your browser.
 
 ## Files
 
-- `index.html` — game markup and screens.
-- `style.css` — dark arcade styling and polished UI.
-- `game.js` — movement, spawning, scoring, speed scaling, and collision logic.
+- `index.html` — game markup, HUD, title screen, pause screen, and game over screen.
+- `style.css` — neon arcade visuals, animated background, HUD, buttons, and effects.
+- `game.js` — game state, smooth movement, spawning, scoring, health, collisions, particles, pause/resume, and best-score saving.
