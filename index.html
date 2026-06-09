@@ -9,47 +9,50 @@
 <body>
   <main class="page-shell">
     <section class="game-card" aria-label="Neon Drift Dodge game">
-      <div class="game-header">
-        <div>
-          <p class="eyebrow">Arcade Survival v2</p>
+      <header class="game-header">
+        <div class="title-block">
+          <p class="eyebrow">Arcade Survival v3</p>
           <h1>Neon Drift Dodge</h1>
         </div>
-        <div class="hud" aria-live="polite">
-          <div class="hud-tile">
-            <span>Score</span>
-            <strong id="score">0</strong>
-          </div>
-          <div class="hud-tile">
-            <span>Best</span>
-            <strong id="bestScore">0</strong>
-          </div>
+        <div class="top-actions">
+          <button id="muteButton" class="utility-button" type="button" aria-pressed="false">Sound On</button>
         </div>
-      </div>
+      </header>
 
-      <div class="status-row" aria-live="polite">
-        <div class="hearts" id="hearts" aria-label="Health: 3 hearts">
-          <span class="heart">♥</span>
-          <span class="heart">♥</span>
-          <span class="heart">♥</span>
+      <section class="hud" aria-live="polite" aria-label="Run statistics">
+        <div class="hud-tile"><span>Score</span><strong id="score">0</strong></div>
+        <div class="hud-tile"><span>Best</span><strong id="bestScore">0</strong></div>
+        <div class="hud-tile"><span>Level</span><strong id="level">1</strong></div>
+        <div class="hud-tile"><span>Combo</span><strong id="combo">x1</strong></div>
+        <div class="hud-tile hearts-tile">
+          <span>Health</span>
+          <strong id="hearts" aria-label="Health: 3 hearts"><span class="heart">♥</span><span class="heart">♥</span><span class="heart">♥</span></strong>
         </div>
-        <div class="combo-pill">Combo <strong id="combo">x1</strong></div>
-        <div class="level-pill">Threat <strong id="threatLevel">1</strong></div>
-      </div>
+        <div class="hud-tile status-tile">
+          <span>Shield</span><strong id="shieldStatus">Empty</strong>
+        </div>
+        <div class="hud-tile dash-tile">
+          <span>Dash</span>
+          <strong id="dashStatus">Ready</strong>
+          <div class="meter" aria-hidden="true"><div id="dashMeter" class="meter-fill"></div></div>
+        </div>
+      </section>
 
       <div id="gameArea" class="game-area">
         <div class="starfield" aria-hidden="true"></div>
         <div class="grid-glow" aria-hidden="true"></div>
+        <div id="countdown" class="countdown" aria-live="assertive" hidden>3</div>
         <div id="player" class="player" aria-label="Player ship"></div>
 
         <div id="startScreen" class="overlay is-visible">
           <div class="overlay-panel title-panel">
             <p class="eyebrow">Insert Coin</p>
             <h2>Neon Drift Dodge</h2>
-            <p>Dodge red hazards, collect glowing energy orbs, and keep your combo alive as the arena speeds up.</p>
+            <p>Dodge neon hazard waves, dash through gaps, collect shield cores, and survive as the arena levels up every 20 seconds.</p>
             <ul class="instruction-list">
               <li><kbd>←</kbd> <kbd>→</kbd> or <kbd>A</kbd> <kbd>D</kbd> to drift</li>
-              <li>Collect blue and yellow orbs for points</li>
-              <li>Press <kbd>P</kbd> to pause or resume</li>
+              <li><kbd>Space</kbd> to dash in your current direction</li>
+              <li><kbd>P</kbd> to pause, collect cyan shields to block one hit</li>
             </ul>
             <button id="startButton" class="primary-button" type="button">Start Run</button>
           </div>
@@ -59,26 +62,27 @@
           <div class="overlay-panel compact-panel">
             <p class="eyebrow">Paused</p>
             <h2>Take a breath</h2>
-            <p>Press <kbd>P</kbd> or the button below to resume the run.</p>
+            <p>The timer, cooldowns, warnings, and invincibility are frozen.</p>
             <button id="resumeButton" class="primary-button" type="button">Resume</button>
           </div>
         </div>
 
         <div id="gameOverScreen" class="overlay">
-          <div class="overlay-panel">
+          <div class="overlay-panel compact-panel">
             <p class="eyebrow danger">Game Over</p>
             <h2>Run Complete</h2>
             <div class="result-grid">
               <div><span>Final Score</span><strong id="finalScore">0</strong></div>
               <div><span>Best Score</span><strong id="finalBestScore">0</strong></div>
+              <div><span>Level Reached</span><strong id="finalLevel">1</strong></div>
             </div>
-            <p id="newBestMessage" class="new-best" hidden>New best score!</p>
+            <p id="newBestMessage" class="new-best" hidden>New best score saved!</p>
             <button id="restartButton" class="primary-button" type="button">Restart Run</button>
           </div>
         </div>
       </div>
 
-      <p class="controls-hint">Move with <kbd>←</kbd>/<kbd>→</kbd> or <kbd>A</kbd>/<kbd>D</kbd>. Pause with <kbd>P</kbd>. You have 3 hearts.</p>
+      <p class="controls-hint">Move <kbd>←</kbd>/<kbd>→</kbd> or <kbd>A</kbd>/<kbd>D</kbd> · Dash <kbd>Space</kbd> · Pause <kbd>P</kbd> · Collect shields · Survive level waves</p>
     </section>
   </main>
 
