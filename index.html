@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shadow Dodge</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="page-shell">
+    <section class="game-card" aria-label="Shadow Dodge game">
+      <div class="game-header">
+        <div>
+          <p class="eyebrow">Arcade Survival</p>
+          <h1>Shadow Dodge</h1>
+        </div>
+        <div class="score-panel" aria-live="polite">
+          <span>Score</span>
+          <strong id="score">0</strong>
+        </div>
+      </div>
+
+      <div id="gameArea" class="game-area">
+        <div class="grid-glow" aria-hidden="true"></div>
+        <div id="player" class="player" aria-label="Player"></div>
+
+        <div id="startScreen" class="overlay is-visible">
+          <div class="overlay-panel">
+            <p class="eyebrow">Ready?</p>
+            <h2>Dodge the shadows</h2>
+            <p>Move the glowing blue square with the left and right arrow keys. Survive as long as you can.</p>
+            <button id="startButton" class="primary-button" type="button">Start Game</button>
+          </div>
+        </div>
+
+        <div id="gameOverScreen" class="overlay">
+          <div class="overlay-panel">
+            <p class="eyebrow danger">Game Over</p>
+            <h2>You were caught</h2>
+            <p>Your final score was <strong id="finalScore">0</strong>.</p>
+            <button id="restartButton" class="primary-button" type="button">Restart</button>
+          </div>
+        </div>
+      </div>
+
+      <p class="controls-hint">Use <kbd>←</kbd> and <kbd>→</kbd> to move. Avoid every red block.</p>
+    </section>
+  </main>
+
+  <script src="game.js"></script>
+</body>
+</html>
