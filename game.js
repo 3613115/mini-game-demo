@@ -22,6 +22,7 @@ const startButton = document.getElementById('startButton');
 const restartButton = document.getElementById('restartButton');
 const resumeButton = document.getElementById('resumeButton');
 const muteButton = document.getElementById('muteButton');
+const heartElements = [...heartsElement.querySelectorAll('.heart')];
 
 const PLAYER_WIDTH = 38;
 const PLAYER_HEIGHT = 38;
@@ -29,10 +30,11 @@ const PLAYER_BOTTOM = 22;
 const LEVEL_DURATION = 20000;
 const DASH_COOLDOWN = 2200;
 const DASH_TIME = 150;
-const DASH_SPEED = 1120;
+const DASH_SPEED = 1060;
 const BOOST_DURATION = 6500;
-const BEST_SCORE_KEY = 'neon-drift-dodge-best-v4';
-const LEGACY_BEST_SCORE_KEY = 'neon-drift-dodge-best-v3';
+const BEST_SCORE_KEY = 'neon-drift-dodge-best-v6';
+const LEGACY_BEST_SCORE_KEYS = ['neon-drift-dodge-best-v4', 'neon-drift-dodge-best-v3'];
+const MAX_PARTICLES = 120;
 
 const keys = {
   ArrowLeft: false,
@@ -76,14 +78,27 @@ const state = {
   pausedAt: 0,
   muted: false,
   audioContext: null,
+  hudCache: {},
 };
 
+function readStoredNumber(key) {
+  try {
+    return Number(window.localStorage.getItem(key)) || 0;
+  } catch (_error) {
+    return 0;
+  }
+}
+
 function readBestScore() {
-  return Number(localStorage.getItem(BEST_SCORE_KEY)) || Number(localStorage.getItem(LEGACY_BEST_SCORE_KEY)) || 0;
+  return Math.max(readStoredNumber(BEST_SCORE_KEY), ...LEGACY_BEST_SCORE_KEYS.map(readStoredNumber));
 }
 
 function saveBestScore(score) {
-  localStorage.setItem(BEST_SCORE_KEY, String(score));
+  try {
+    window.localStorage.setItem(BEST_SCORE_KEY, String(score));
+  } catch (_error) {
+    // Storage can be unavailable in some privacy modes; the in-memory best still updates.
+  }
 }
 
 function clamp(value, min, max) {
@@ -116,49 +131,69 @@ function resetPlayerPosition() {
   setPlayerPosition();
 }
 
-function updateHud(timestamp = performance.now()) {
-  scoreElement.textContent = state.score;
-  bestScoreElement.textContent = state.bestScore;
-  levelElement.textContent = state.level;
-  comboElement.textContent = `x${state.combo}`;
-  heartsElement.setAttribute('aria-label', `Health: ${state.health} hearts`);
-  [...heartsElement.querySelectorAll('.heart')].forEach((heart, index) => {
-    heart.classList.toggle('is-empty', index >= state.health);
-  });
+function setTextIfChanged(element, value, cacheKey) {
+  const text = String(value);
+  if (state.hudCache[cacheKey] !== text) {
+    element.textContent = text;
+    state.hudCache[cacheKey] = text;
+  }
+}
 
-  shieldStatusElement.textContent = state.hasShield ? 'Active' : 'Empty';
+function updatePlayerEffects(timestamp = performance.now()) {
   player.classList.toggle('has-shield', state.hasShield);
+  player.classList.toggle('has-boost', timestamp < state.speedBoostUntil);
+}
+
+function updateHud(timestamp = performance.now()) {
+  setTextIfChanged(scoreElement, state.score, 'score');
+  setTextIfChanged(bestScoreElement, state.bestScore, 'bestScore');
+  setTextIfChanged(levelElement, state.level, 'level');
+  setTextIfChanged(comboElement, `x${state.combo}`, 'combo');
+
+  if (state.hudCache.health !== state.health) {
+    heartsElement.setAttribute('aria-label', `Health: ${state.health} hearts`);
+    heartElements.forEach((heart, index) => {
+      heart.classList.toggle('is-empty', index >= state.health);
+    });
+    state.hudCache.health = state.health;
+  }
+
+  setTextIfChanged(shieldStatusElement, state.hasShield ? 'Active' : 'Empty', 'shield');
+  updatePlayerEffects(timestamp);
 
   const boostRemaining = Math.max(0, state.speedBoostUntil - timestamp);
-  speedStatusElement.textContent = boostRemaining > 0 ? `${Math.ceil(boostRemaining / 1000)}s` : 'Empty';
-  player.classList.toggle('has-boost', boostRemaining > 0);
+  setTextIfChanged(speedStatusElement, boostRemaining > 0 ? `${Math.ceil(boostRemaining / 1000)}s` : 'Empty', 'boost');
 
   const dashRemaining = Math.max(0, state.dashReadyAt - timestamp);
   const dashProgress = 1 - clamp(dashRemaining / DASH_COOLDOWN, 0, 1);
-  dashStatusElement.textContent = dashRemaining === 0 ? 'Ready' : `${Math.ceil(dashRemaining / 1000)}s`;
-  dashMeterElement.style.transform = `scaleX(${dashProgress})`;
+  setTextIfChanged(dashStatusElement, dashRemaining === 0 ? 'Ready' : `${Math.ceil(dashRemaining / 1000)}s`, 'dash');
+
+  const meterScale = dashProgress.toFixed(3);
+  if (state.hudCache.dashMeter !== meterScale) {
+    dashMeterElement.style.transform = `scaleX(${meterScale})`;
+    state.hudCache.dashMeter = meterScale;
+  }
 }
 
 function ensureAudioContext() {
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextConstructor) {
+    return null;
+  }
+
   if (!state.audioContext) {
-    state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    state.audioContext = new AudioContextConstructor();
   }
   if (state.audioContext.state === 'suspended') {
     state.audioContext.resume();
   }
+  return state.audioContext;
 }
 
 function playSound(type) {
   if (state.muted) {
     return;
   }
-
-  ensureAudioContext();
-  const context = state.audioContext;
-  const now = context.currentTime;
-  const oscillator = context.createOscillator();
-  const gain = context.createGain();
-  const filter = context.createBiquadFilter();
 
   const settings = {
     collect: { wave: 'sine', start: 620, end: 1040, duration: 0.12, volume: 0.09 },
@@ -168,6 +203,20 @@ function playSound(type) {
     dash: { wave: 'square', start: 260, end: 520, duration: 0.1, volume: 0.08 },
     over: { wave: 'sawtooth', start: 180, end: 45, duration: 0.55, volume: 0.12 },
   }[type];
+
+  if (!settings) {
+    return;
+  }
+
+  const context = ensureAudioContext();
+  if (!context) {
+    return;
+  }
+
+  const now = context.currentTime;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  const filter = context.createBiquadFilter();
 
   oscillator.type = settings.wave;
   filter.type = 'lowpass';
@@ -188,10 +237,10 @@ function playSound(type) {
 function getDifficulty() {
   const level = state.level;
   return {
-    hazardDelay: clamp(780 - level * 52, 250, 780),
-    orbDelay: clamp(1550 - level * 35, 900, 1550),
-    hazardSpeed: 1 + (level - 1) * 0.13,
-    waveDelay: clamp(7600 - level * 320, 3600, 7600),
+    hazardDelay: clamp(820 - level * 46, 280, 820),
+    orbDelay: clamp(1500 - level * 28, 920, 1500),
+    hazardSpeed: 1 + (level - 1) * 0.11,
+    waveDelay: clamp(8000 - level * 280, 3900, 8000),
   };
 }
 
@@ -215,16 +264,20 @@ function spawnSingleHazard() {
   const difficulty = getDifficulty();
   const gameWidth = getGameWidth();
   const type = randomChoice(['block', 'line', 'diagonal', 'wave']);
-  const width = type === 'line' ? randomBetween(80, 150) : randomBetween(34, 62);
-  const height = type === 'line' ? randomBetween(16, 26) : randomBetween(34, 66);
+  const width = type === 'line' ? randomBetween(72, Math.min(140, gameWidth * 0.32)) : randomBetween(34, 58);
+  const height = type === 'line' ? randomBetween(16, 24) : randomBetween(34, 60);
   const x = randomBetween(0, Math.max(1, gameWidth - width));
-  const speed = randomBetween(210, 330) * difficulty.hazardSpeed;
-  const vx = type === 'diagonal' ? randomChoice([-1, 1]) * randomBetween(65, 115) : 0;
-  const wave = type === 'wave' ? { wavePhase: randomBetween(0, Math.PI * 2), waveAmplitude: randomBetween(22, 46), waveSpeed: randomBetween(4, 7), startX: x } : {};
+  const speed = randomBetween(205, 315) * difficulty.hazardSpeed;
+  const vx = type === 'diagonal' ? randomChoice([-1, 1]) * randomBetween(58, 100) : 0;
+  const wave = type === 'wave' ? { wavePhase: randomBetween(0, Math.PI * 2), waveAmplitude: randomBetween(18, Math.min(40, gameWidth * 0.08)), waveSpeed: randomBetween(4, 7), startX: x } : {};
   spawnHazardAt(x, -height - 8, width, height, speed, `hazard ${type}`, vx, wave);
 }
 
 function addWarning(x, width, duration = 850) {
+  if (width <= 1) {
+    return null;
+  }
+
   const warning = document.createElement('div');
   warning.className = 'warning-lane';
   warning.style.left = `${x}px`;
@@ -238,7 +291,7 @@ function addWarning(x, width, duration = 850) {
 function spawnLineWave() {
   const difficulty = getDifficulty();
   const gameWidth = getGameWidth();
-  const count = clamp(4 + Math.floor(state.level / 2), 4, 9);
+  const count = clamp(4 + Math.floor(state.level / 2), 4, 8);
   const laneWidth = gameWidth / count;
   const gapIndex = Math.floor(Math.random() * count);
 
@@ -246,9 +299,9 @@ function spawnLineWave() {
     if (lane === gapIndex) {
       continue;
     }
-    const width = Math.max(30, laneWidth - 10);
-    const x = lane * laneWidth + 5;
-    spawnHazardAt(x, -50, width, 24, (250 + state.level * 18) * difficulty.hazardSpeed, 'hazard line');
+    const width = Math.max(28, laneWidth - 12);
+    const x = lane * laneWidth + 6;
+    spawnHazardAt(x, -50, width, 22, (238 + state.level * 16) * difficulty.hazardSpeed, 'hazard line');
   }
 }
 
@@ -256,30 +309,30 @@ function spawnDiagonalWave() {
   const difficulty = getDifficulty();
   const gameWidth = getGameWidth();
   const fromLeft = Math.random() > 0.5;
-  const count = clamp(5 + Math.floor(state.level / 2), 5, 10);
+  const count = clamp(5 + Math.floor(state.level / 2), 5, 9);
 
   for (let index = 0; index < count; index += 1) {
-    const width = 38;
-    const x = fromLeft ? index * 58 - 40 : gameWidth - index * 58;
-    const y = -70 - index * 42;
-    const vx = fromLeft ? 84 : -84;
-    spawnHazardAt(x, y, width, 44, (230 + state.level * 14) * difficulty.hazardSpeed, 'hazard diagonal', vx);
+    const width = 36;
+    const x = fromLeft ? index * 56 - 40 : gameWidth - index * 56;
+    const y = -70 - index * 44;
+    const vx = fromLeft ? 76 : -76;
+    spawnHazardAt(x, y, width, 42, (220 + state.level * 13) * difficulty.hazardSpeed, 'hazard diagonal', vx);
   }
 }
 
 function spawnWavePattern() {
   const difficulty = getDifficulty();
   const gameWidth = getGameWidth();
-  const count = clamp(6 + Math.floor(state.level / 2), 6, 11);
+  const count = clamp(6 + Math.floor(state.level / 2), 6, 10);
   const spacing = gameWidth / count;
 
   for (let index = 0; index < count; index += 1) {
-    const size = 34;
+    const size = 32;
     const x = index * spacing + spacing / 2 - size / 2;
     const y = -70 - Math.sin(index * 0.9) * 45 - index * 18;
-    spawnHazardAt(x, y, size, size, (220 + state.level * 16) * difficulty.hazardSpeed, 'hazard wave', 0, {
+    spawnHazardAt(x, y, size, size, (210 + state.level * 14) * difficulty.hazardSpeed, 'hazard wave', 0, {
       wavePhase: index * 0.85,
-      waveAmplitude: 30,
+      waveAmplitude: Math.min(26, gameWidth * 0.07),
       waveSpeed: 5,
       startX: x,
     });
@@ -295,9 +348,9 @@ function spawnGapWave(lanes, gapIndex) {
     if (lane === gapIndex) {
       continue;
     }
-    const width = Math.max(32, laneWidth - 8);
-    const x = lane * laneWidth + 4;
-    spawnHazardAt(x, -58, width, 28, (265 + state.level * 20) * difficulty.hazardSpeed, 'hazard line');
+    const width = Math.max(30, laneWidth - 10);
+    const x = lane * laneWidth + 5;
+    spawnHazardAt(x, -58, width, 26, (250 + state.level * 18) * difficulty.hazardSpeed, 'hazard line');
   }
 }
 
@@ -310,7 +363,7 @@ function scheduleWave(spawnFunction, delay) {
 
 function spawnGapWaveWithWarning() {
   const gameWidth = getGameWidth();
-  const lanes = clamp(5 + Math.floor(state.level / 2), 5, 8);
+  const lanes = clamp(5 + Math.floor(state.level / 2), 5, 7);
   const laneWidth = gameWidth / lanes;
   const gapIndex = Math.floor(Math.random() * lanes);
   const gapX = gapIndex * laneWidth;
@@ -346,7 +399,7 @@ function spawnOrb(kind = null) {
   const gameWidth = getGameWidth();
   const type = kind || randomChoice(['energy', 'energy', 'bonus', 'speed']);
   const size = type === 'shield' ? 30 : type === 'bonus' ? 24 : type === 'speed' ? 26 : 22;
-  const orb = createFallingItem(`orb ${type}`, randomBetween(6, gameWidth - size - 6), -size - 8, size, size, randomBetween(135, 180) * difficulty.hazardSpeed, {
+  const orb = createFallingItem(`orb ${type}`, randomBetween(8, Math.max(8, gameWidth - size - 8)), -size - 8, size, size, randomBetween(130, 172) * difficulty.hazardSpeed, {
     kind: 'orb',
     orbType: type,
     value: type === 'bonus' ? 40 : type === 'speed' ? 30 : 20,
@@ -390,9 +443,9 @@ function updatePlayer(deltaSeconds, timestamp) {
   const moveRight = keys.ArrowRight || keys.KeyD;
   const direction = Number(moveRight) - Number(moveLeft);
   const boostActive = timestamp < state.speedBoostUntil;
-  const acceleration = boostActive ? 3600 : 2850;
-  const deceleration = boostActive ? 4200 : 3600;
-  const maxSpeed = boostActive ? 720 : 580;
+  const acceleration = boostActive ? 3450 : 2750;
+  const deceleration = boostActive ? 4300 : 3700;
+  const maxSpeed = boostActive ? 690 : 560;
   const halfWidth = PLAYER_WIDTH / 2;
 
   if (direction !== 0) {
@@ -418,6 +471,7 @@ function updatePlayer(deltaSeconds, timestamp) {
   if (state.playerX < halfWidth || state.playerX > getGameWidth() - halfWidth) {
     state.playerX = clamp(state.playerX, halfWidth, getGameWidth() - halfWidth);
     state.playerVelocity = 0;
+    state.dashUntil = 0;
   }
 
   setPlayerPosition();
@@ -432,7 +486,7 @@ function startDash(timestamp) {
   state.dashUntil = timestamp + DASH_TIME;
   state.dashReadyAt = timestamp + DASH_COOLDOWN;
   player.classList.add('is-dashing');
-  createParticles(state.playerX, getGameHeight() - PLAYER_BOTTOM, '#23dcff', 14, 260);
+  createParticles(state.playerX, getGameHeight() - PLAYER_BOTTOM, '#23dcff', 12, 240);
   playSound('dash');
   updateHud(timestamp);
 }
@@ -448,24 +502,25 @@ function moveItem(item, deltaSeconds) {
   if (item.kind === 'hazard' && item.vx) {
     if (item.x < -item.width * 0.5 || item.x > getGameWidth() - item.width * 0.5) {
       item.vx *= -1;
+      item.x = clamp(item.x, -item.width * 0.5, getGameWidth() - item.width * 0.5);
     }
   }
 
-  const sway = item.kind === 'orb' ? Math.sin((item.y + item.x) / 34) * 5 : 0;
-  item.element.style.transform = `translate(${item.x + sway}px, ${item.y}px)`;
+  item.renderX = item.x + (item.kind === 'orb' ? Math.sin((item.y + item.x) / 34) * 5 : 0);
+  item.element.style.transform = `translate(${item.renderX}px, ${item.y}px)`;
 }
 
 function getPlayerRect() {
   return {
-    x: state.playerX - PLAYER_WIDTH / 2 + 6,
-    y: getGameHeight() - PLAYER_BOTTOM - PLAYER_HEIGHT + 7,
-    width: PLAYER_WIDTH - 12,
-    height: PLAYER_HEIGHT - 10,
+    x: state.playerX - PLAYER_WIDTH / 2 + 7,
+    y: getGameHeight() - PLAYER_BOTTOM - PLAYER_HEIGHT + 8,
+    width: PLAYER_WIDTH - 14,
+    height: PLAYER_HEIGHT - 12,
   };
 }
 
 function getItemRect(item) {
-  return { x: item.x, y: item.y, width: item.width, height: item.height };
+  return { x: item.renderX ?? item.x, y: item.y, width: item.width, height: item.height };
 }
 
 function rectanglesOverlap(a, b) {
@@ -477,7 +532,7 @@ function circlesOverlap(a, b) {
   const ay = a.y + a.height / 2;
   const bx = b.x + b.width / 2;
   const by = b.y + b.height / 2;
-  const radius = Math.min(a.width, a.height) * 0.42 + Math.min(b.width, b.height) * 0.42;
+  const radius = Math.min(a.width, a.height) * 0.4 + Math.min(b.width, b.height) * 0.4;
   return Math.hypot(ax - bx, ay - by) < radius;
 }
 
@@ -490,8 +545,18 @@ function playerCollidesWith(item) {
   return item.kind === 'orb' || circlesOverlap(playerRect, itemRect);
 }
 
+function trimParticles() {
+  while (state.particles.length > MAX_PARTICLES) {
+    const particle = state.particles.shift();
+    particle.element.remove();
+  }
+}
+
 function createParticles(x, y, color, count, power) {
-  for (let index = 0; index < count; index += 1) {
+  const availableSlots = Math.max(0, MAX_PARTICLES - state.particles.length);
+  const particleCount = Math.min(count, availableSlots || Math.ceil(count / 2));
+
+  for (let index = 0; index < particleCount; index += 1) {
     const particle = document.createElement('div');
     const angle = randomBetween(0, Math.PI * 2);
     const speed = randomBetween(power * 0.45, power);
@@ -515,6 +580,8 @@ function createParticles(x, y, color, count, power) {
       maxLife: 0.75,
     });
   }
+
+  trimParticles();
 }
 
 function updateParticles(deltaSeconds) {
@@ -529,8 +596,9 @@ function updateParticles(deltaSeconds) {
       return false;
     }
 
-    particle.element.style.opacity = String(clamp(particle.life / particle.maxLife, 0, 1));
-    particle.element.style.transform = `translate(${particle.x}px, ${particle.y}px) scale(${clamp(particle.life / particle.maxLife, 0.25, 1)})`;
+    const lifeRatio = clamp(particle.life / particle.maxLife, 0, 1);
+    particle.element.style.opacity = String(lifeRatio);
+    particle.element.style.transform = `translate(${particle.x}px, ${particle.y}px) scale(${clamp(lifeRatio, 0.25, 1)})`;
     return true;
   });
 }
@@ -555,37 +623,37 @@ function updatePendingWaves(timestamp) {
   });
 }
 
-function collectOrb(orb) {
-  const centerX = orb.x + orb.width / 2;
+function collectOrb(orb, timestamp) {
+  const centerX = (orb.renderX ?? orb.x) + orb.width / 2;
   const centerY = orb.y + orb.height / 2;
 
   if (orb.orbType === 'shield') {
     state.hasShield = true;
     addScore(35 * getMultiplier());
     addComboStep(1);
-    createParticles(centerX, centerY, orb.color, 22, 210);
+    createParticles(centerX, centerY, orb.color, 20, 200);
     playSound('shield');
   } else if (orb.orbType === 'speed') {
-    state.speedBoostUntil = performance.now() + BOOST_DURATION;
+    state.speedBoostUntil = timestamp + BOOST_DURATION;
     addScore(orb.value * getMultiplier());
     addComboStep(2);
-    createParticles(centerX, centerY, orb.color, 24, 245);
+    createParticles(centerX, centerY, orb.color, 22, 230);
     playSound('boost');
   } else {
     const earned = orb.value * getMultiplier();
     addScore(earned);
     addComboStep(1);
-    createParticles(centerX, centerY, orb.color, 16, 185);
+    createParticles(centerX, centerY, orb.color, 14, 170);
     playSound('collect');
   }
 
-  updateHud();
+  updateHud(timestamp);
   orb.element.remove();
 }
 
 function triggerHitFeedback(x, y, timestamp, color = '#ff315f') {
   state.invulnerableUntil = timestamp + 1300;
-  createParticles(x, y, color, 26, 280);
+  createParticles(x, y, color, 24, 260);
   player.classList.remove('is-hit');
   gameArea.classList.remove('is-shaking');
   void player.offsetWidth;
@@ -604,7 +672,7 @@ function hitPlayer(hazard, timestamp) {
     return;
   }
 
-  const hitX = hazard.x + hazard.width / 2;
+  const hitX = (hazard.renderX ?? hazard.x) + hazard.width / 2;
   const hitY = hazard.y + hazard.height / 2;
 
   if (state.hasShield) {
@@ -663,7 +731,7 @@ function updateFallingItems(deltaSeconds, timestamp) {
     moveItem(orb, deltaSeconds);
 
     if (playerCollidesWith(orb)) {
-      collectOrb(orb);
+      collectOrb(orb, timestamp);
       return false;
     }
 
@@ -739,8 +807,10 @@ function gameLoop(timestamp) {
     state.lastOrbSpawn = timestamp;
   }
 
-  if (timestamp - state.lastShieldSpawn >= 14000 && Math.random() > 0.4) {
-    spawnOrb('shield');
+  if (timestamp - state.lastShieldSpawn >= 14000) {
+    if (Math.random() > 0.4) {
+      spawnOrb('shield');
+    }
     state.lastShieldSpawn = timestamp;
   }
 
@@ -790,11 +860,17 @@ function beginCountdown() {
   }, 760);
 }
 
+function resetInput() {
+  Object.keys(keys).forEach((key) => { keys[key] = false; });
+}
+
 function resetRunState(now) {
   cancelAnimationFrame(state.animationId);
   window.clearInterval(state.countdownTimer);
+  countdownElement.hidden = true;
+  countdownElement.classList.remove('is-subtle');
   clearArena();
-  Object.keys(keys).forEach((key) => { keys[key] = false; });
+  resetInput();
 
   state.lastFrameTime = 0;
   state.lastHazardSpawn = now;
@@ -814,6 +890,7 @@ function resetRunState(now) {
   state.dashReadyAt = now;
   state.dashUntil = 0;
   state.pausedAt = 0;
+  state.hudCache = {};
   newBestMessage.hidden = true;
   player.classList.remove('is-hit', 'is-dashing', 'has-shield', 'has-boost');
   gameArea.classList.remove('is-shaking');
@@ -832,11 +909,11 @@ function startPlaying() {
   const now = performance.now();
   state.mode = 'playing';
   state.startedAt = now;
-  state.lastHazardSpawn = now - 250;
+  state.lastHazardSpawn = now - 150;
   state.lastOrbSpawn = now;
   state.lastShieldSpawn = now;
   state.lastScoreTime = now;
-  state.lastWaveTime = now + 1200;
+  state.lastWaveTime = now + 1400;
   state.invulnerableUntil = now + 1200;
   state.lastFrameTime = 0;
   state.animationId = requestAnimationFrame(gameLoop);
@@ -849,6 +926,8 @@ function pauseGame() {
 
   state.mode = 'paused';
   state.pausedAt = performance.now();
+  state.playerVelocity = 0;
+  resetInput();
   cancelAnimationFrame(state.animationId);
   pauseScreen.classList.add('is-visible');
 }
@@ -894,6 +973,7 @@ function endGame() {
   }
 
   state.mode = 'gameover';
+  resetInput();
   cancelAnimationFrame(state.animationId);
   playSound('over');
 
@@ -944,10 +1024,16 @@ function toggleMute() {
   state.muted = !state.muted;
   muteButton.textContent = state.muted ? 'Muted' : 'Sound On';
   muteButton.setAttribute('aria-pressed', String(state.muted));
+  muteButton.setAttribute('aria-label', state.muted ? 'Sound muted' : 'Sound on');
+
+  if (state.muted && state.audioContext?.state === 'running') {
+    state.audioContext.suspend();
+  }
 }
 
 window.addEventListener('keydown', handleKeyDown);
 window.addEventListener('keyup', handleKeyUp);
+window.addEventListener('blur', resetInput);
 window.addEventListener('resize', () => {
   state.playerX = clamp(state.playerX || getGameWidth() / 2, PLAYER_WIDTH / 2, getGameWidth() - PLAYER_WIDTH / 2);
   setPlayerPosition();
