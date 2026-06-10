@@ -655,7 +655,7 @@ function beginCountdown() {
     }
 
     if (state.countdownValue === 0) {
-      countdownElement.textContent = 'GO';
+      countdownElement.textContent = 'oeeco';
       return;
     }
 
