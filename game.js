@@ -6,6 +6,7 @@ const levelElement = document.getElementById('level');
 const comboElement = document.getElementById('combo');
 const heartsElement = document.getElementById('hearts');
 const shieldStatusElement = document.getElementById('shieldStatus');
+const speedStatusElement = document.getElementById('speedStatus');
 const dashStatusElement = document.getElementById('dashStatus');
 const dashMeterElement = document.getElementById('dashMeter');
 const countdownElement = document.getElementById('countdown');
@@ -16,6 +17,7 @@ const finalScoreElement = document.getElementById('finalScore');
 const finalBestScoreElement = document.getElementById('finalBestScore');
 const finalLevelElement = document.getElementById('finalLevel');
 const newBestMessage = document.getElementById('newBestMessage');
+const levelToastElement = document.getElementById('levelToast');
 const startButton = document.getElementById('startButton');
 const restartButton = document.getElementById('restartButton');
 const resumeButton = document.getElementById('resumeButton');
@@ -27,8 +29,10 @@ const PLAYER_BOTTOM = 22;
 const LEVEL_DURATION = 20000;
 const DASH_COOLDOWN = 2200;
 const DASH_TIME = 150;
-const DASH_SPEED = 1100;
-const BEST_SCORE_KEY = 'neon-drift-dodge-best-v3';
+const DASH_SPEED = 1120;
+const BOOST_DURATION = 6500;
+const BEST_SCORE_KEY = 'neon-drift-dodge-best-v4';
+const LEGACY_BEST_SCORE_KEY = 'neon-drift-dodge-best-v3';
 
 const keys = {
   ArrowLeft: false,
@@ -51,6 +55,8 @@ const state = {
   combo: 1,
   level: 1,
   hasShield: false,
+  speedBoostUntil: 0,
+  dodgeStreak: 0,
   hazards: [],
   orbs: [],
   particles: [],
@@ -73,7 +79,7 @@ const state = {
 };
 
 function readBestScore() {
-  return Number(localStorage.getItem(BEST_SCORE_KEY)) || 0;
+  return Number(localStorage.getItem(BEST_SCORE_KEY)) || Number(localStorage.getItem(LEGACY_BEST_SCORE_KEY)) || 0;
 }
 
 function saveBestScore(score) {
@@ -123,6 +129,10 @@ function updateHud(timestamp = performance.now()) {
   shieldStatusElement.textContent = state.hasShield ? 'Active' : 'Empty';
   player.classList.toggle('has-shield', state.hasShield);
 
+  const boostRemaining = Math.max(0, state.speedBoostUntil - timestamp);
+  speedStatusElement.textContent = boostRemaining > 0 ? `${Math.ceil(boostRemaining / 1000)}s` : 'Empty';
+  player.classList.toggle('has-boost', boostRemaining > 0);
+
   const dashRemaining = Math.max(0, state.dashReadyAt - timestamp);
   const dashProgress = 1 - clamp(dashRemaining / DASH_COOLDOWN, 0, 1);
   dashStatusElement.textContent = dashRemaining === 0 ? 'Ready' : `${Math.ceil(dashRemaining / 1000)}s`;
@@ -152,6 +162,7 @@ function playSound(type) {
 
   const settings = {
     collect: { wave: 'sine', start: 620, end: 1040, duration: 0.12, volume: 0.09 },
+    boost: { wave: 'triangle', start: 520, end: 1240, duration: 0.18, volume: 0.1 },
     shield: { wave: 'triangle', start: 440, end: 880, duration: 0.22, volume: 0.1 },
     hit: { wave: 'sawtooth', start: 150, end: 65, duration: 0.18, volume: 0.13 },
     dash: { wave: 'square', start: 260, end: 520, duration: 0.1, volume: 0.08 },
@@ -194,8 +205,8 @@ function createFallingItem(className, x, y, width, height, fallSpeed, extra = {}
   return { element, x, y, width, height, fallSpeed, vx: 0, ...extra };
 }
 
-function spawnHazardAt(x, y, width, height, speed, className = 'hazard block', vx = 0) {
-  const hazard = createFallingItem(className, x, y, width, height, speed, { kind: 'hazard', vx });
+function spawnHazardAt(x, y, width, height, speed, className = 'hazard block', vx = 0, extra = {}) {
+  const hazard = createFallingItem(className, x, y, width, height, speed, { kind: 'hazard', vx, scored: false, ...extra });
   state.hazards.push(hazard);
   return hazard;
 }
@@ -203,13 +214,14 @@ function spawnHazardAt(x, y, width, height, speed, className = 'hazard block', v
 function spawnSingleHazard() {
   const difficulty = getDifficulty();
   const gameWidth = getGameWidth();
-  const type = randomChoice(['block', 'line', 'diagonal']);
+  const type = randomChoice(['block', 'line', 'diagonal', 'wave']);
   const width = type === 'line' ? randomBetween(80, 150) : randomBetween(34, 62);
   const height = type === 'line' ? randomBetween(16, 26) : randomBetween(34, 66);
   const x = randomBetween(0, Math.max(1, gameWidth - width));
   const speed = randomBetween(210, 330) * difficulty.hazardSpeed;
   const vx = type === 'diagonal' ? randomChoice([-1, 1]) * randomBetween(65, 115) : 0;
-  spawnHazardAt(x, -height - 8, width, height, speed, `hazard ${type}`, vx);
+  const wave = type === 'wave' ? { wavePhase: randomBetween(0, Math.PI * 2), waveAmplitude: randomBetween(22, 46), waveSpeed: randomBetween(4, 7), startX: x } : {};
+  spawnHazardAt(x, -height - 8, width, height, speed, `hazard ${type}`, vx, wave);
 }
 
 function addWarning(x, width, duration = 850) {
@@ -255,6 +267,40 @@ function spawnDiagonalWave() {
   }
 }
 
+function spawnWavePattern() {
+  const difficulty = getDifficulty();
+  const gameWidth = getGameWidth();
+  const count = clamp(6 + Math.floor(state.level / 2), 6, 11);
+  const spacing = gameWidth / count;
+
+  for (let index = 0; index < count; index += 1) {
+    const size = 34;
+    const x = index * spacing + spacing / 2 - size / 2;
+    const y = -70 - Math.sin(index * 0.9) * 45 - index * 18;
+    spawnHazardAt(x, y, size, size, (220 + state.level * 16) * difficulty.hazardSpeed, 'hazard wave', 0, {
+      wavePhase: index * 0.85,
+      waveAmplitude: 30,
+      waveSpeed: 5,
+      startX: x,
+    });
+  }
+}
+
+function spawnGapWave(lanes, gapIndex) {
+  const difficulty = getDifficulty();
+  const gameWidth = getGameWidth();
+  const laneWidth = gameWidth / lanes;
+
+  for (let lane = 0; lane < lanes; lane += 1) {
+    if (lane === gapIndex) {
+      continue;
+    }
+    const width = Math.max(32, laneWidth - 8);
+    const x = lane * laneWidth + 4;
+    spawnHazardAt(x, -58, width, 28, (265 + state.level * 20) * difficulty.hazardSpeed, 'hazard line');
+  }
+}
+
 function scheduleWave(spawnFunction, delay) {
   state.pendingWaves.push({
     executeAt: performance.now() + delay,
@@ -271,7 +317,7 @@ function spawnGapWaveWithWarning() {
 
   addWarning(0, gapX, 900);
   addWarning(gapX + laneWidth, Math.max(0, gameWidth - gapX - laneWidth), 900);
-  scheduleWave(spawnLineWave, 850);
+  scheduleWave(() => spawnGapWave(lanes, gapIndex), 850);
 }
 
 function spawnDangerWave() {
@@ -280,12 +326,15 @@ function spawnDangerWave() {
     return;
   }
 
-  const pattern = randomChoice(['line', 'diagonal', 'gap']);
+  const pattern = randomChoice(['line', 'diagonal', 'gap', 'wave']);
   if (pattern === 'diagonal') {
     addWarning(0, getGameWidth(), 750);
     scheduleWave(spawnDiagonalWave, 700);
   } else if (pattern === 'gap') {
     spawnGapWaveWithWarning();
+  } else if (pattern === 'wave') {
+    addWarning(0, getGameWidth(), 750);
+    scheduleWave(spawnWavePattern, 700);
   } else {
     addWarning(0, getGameWidth(), 750);
     scheduleWave(spawnLineWave, 700);
@@ -295,13 +344,13 @@ function spawnDangerWave() {
 function spawnOrb(kind = null) {
   const difficulty = getDifficulty();
   const gameWidth = getGameWidth();
-  const type = kind || (Math.random() > 0.72 ? 'bonus' : 'energy');
-  const size = type === 'shield' ? 30 : type === 'bonus' ? 24 : 22;
+  const type = kind || randomChoice(['energy', 'energy', 'bonus', 'speed']);
+  const size = type === 'shield' ? 30 : type === 'bonus' ? 24 : type === 'speed' ? 26 : 22;
   const orb = createFallingItem(`orb ${type}`, randomBetween(6, gameWidth - size - 6), -size - 8, size, size, randomBetween(135, 180) * difficulty.hazardSpeed, {
     kind: 'orb',
     orbType: type,
-    value: type === 'bonus' ? 40 : 20,
-    color: type === 'shield' ? '#44ffc8' : type === 'bonus' ? '#23dcff' : '#ffe46b',
+    value: type === 'bonus' ? 40 : type === 'speed' ? 30 : 20,
+    color: type === 'shield' ? '#44ffc8' : type === 'speed' ? '#b967ff' : type === 'bonus' ? '#23dcff' : '#ffe46b',
   });
   state.orbs.push(orb);
 }
@@ -318,21 +367,32 @@ function clearArena() {
   removeElementList(state.warnings);
   state.pendingWaves.length = 0;
   gameArea.querySelectorAll('.hazard, .orb, .particle, .warning-lane').forEach((element) => element.remove());
+  levelToastElement.hidden = true;
+  levelToastElement.classList.remove('is-visible');
 }
 
 function addScore(points) {
-  state.score += points;
+  state.score += Math.round(points);
   state.bestScore = Math.max(state.bestScore, state.score);
   updateHud();
+}
+
+function getMultiplier() {
+  return clamp(state.combo, 1, 12);
+}
+
+function addComboStep(amount = 1) {
+  state.combo = clamp(state.combo + amount, 1, 12);
 }
 
 function updatePlayer(deltaSeconds, timestamp) {
   const moveLeft = keys.ArrowLeft || keys.KeyA;
   const moveRight = keys.ArrowRight || keys.KeyD;
   const direction = Number(moveRight) - Number(moveLeft);
-  const acceleration = 2400;
-  const friction = direction === 0 ? 0.84 : 0.93;
-  const maxSpeed = 560;
+  const boostActive = timestamp < state.speedBoostUntil;
+  const acceleration = boostActive ? 3600 : 2850;
+  const deceleration = boostActive ? 4200 : 3600;
+  const maxSpeed = boostActive ? 720 : 580;
   const halfWidth = PLAYER_WIDTH / 2;
 
   if (direction !== 0) {
@@ -343,8 +403,13 @@ function updatePlayer(deltaSeconds, timestamp) {
     state.playerVelocity = state.dashDirection * DASH_SPEED;
   } else {
     player.classList.remove('is-dashing');
-    state.playerVelocity += direction * acceleration * deltaSeconds;
-    state.playerVelocity *= friction;
+    if (direction !== 0) {
+      state.playerVelocity += direction * acceleration * deltaSeconds;
+    } else if (state.playerVelocity > 0) {
+      state.playerVelocity = Math.max(0, state.playerVelocity - deceleration * deltaSeconds);
+    } else if (state.playerVelocity < 0) {
+      state.playerVelocity = Math.min(0, state.playerVelocity + deceleration * deltaSeconds);
+    }
     state.playerVelocity = clamp(state.playerVelocity, -maxSpeed, maxSpeed);
   }
 
@@ -376,6 +441,10 @@ function moveItem(item, deltaSeconds) {
   item.y += item.fallSpeed * deltaSeconds;
   item.x += (item.vx || 0) * deltaSeconds;
 
+  if (item.waveAmplitude) {
+    item.x = item.startX + Math.sin(item.y / 52 + item.wavePhase) * item.waveAmplitude;
+  }
+
   if (item.kind === 'hazard' && item.vx) {
     if (item.x < -item.width * 0.5 || item.x > getGameWidth() - item.width * 0.5) {
       item.vx *= -1;
@@ -401,6 +470,24 @@ function getItemRect(item) {
 
 function rectanglesOverlap(a, b) {
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+function circlesOverlap(a, b) {
+  const ax = a.x + a.width / 2;
+  const ay = a.y + a.height / 2;
+  const bx = b.x + b.width / 2;
+  const by = b.y + b.height / 2;
+  const radius = Math.min(a.width, a.height) * 0.42 + Math.min(b.width, b.height) * 0.42;
+  return Math.hypot(ax - bx, ay - by) < radius;
+}
+
+function playerCollidesWith(item) {
+  const playerRect = getPlayerRect();
+  const itemRect = getItemRect(item);
+  if (!rectanglesOverlap(playerRect, itemRect)) {
+    return false;
+  }
+  return item.kind === 'orb' || circlesOverlap(playerRect, itemRect);
 }
 
 function createParticles(x, y, color, count, power) {
@@ -474,12 +561,20 @@ function collectOrb(orb) {
 
   if (orb.orbType === 'shield') {
     state.hasShield = true;
+    addScore(35 * getMultiplier());
+    addComboStep(1);
     createParticles(centerX, centerY, orb.color, 22, 210);
     playSound('shield');
+  } else if (orb.orbType === 'speed') {
+    state.speedBoostUntil = performance.now() + BOOST_DURATION;
+    addScore(orb.value * getMultiplier());
+    addComboStep(2);
+    createParticles(centerX, centerY, orb.color, 24, 245);
+    playSound('boost');
   } else {
-    const earned = orb.value * state.combo;
+    const earned = orb.value * getMultiplier();
     addScore(earned);
-    state.combo = clamp(state.combo + 1, 1, 12);
+    addComboStep(1);
     createParticles(centerX, centerY, orb.color, 16, 185);
     playSound('collect');
   }
@@ -515,6 +610,7 @@ function hitPlayer(hazard, timestamp) {
   if (state.hasShield) {
     state.hasShield = false;
     state.combo = 1;
+    state.dodgeStreak = 0;
     triggerHitFeedback(hitX, hitY, timestamp, '#44ffc8');
     playSound('shield');
     updateHud(timestamp);
@@ -523,6 +619,7 @@ function hitPlayer(hazard, timestamp) {
 
   state.health -= 1;
   state.combo = 1;
+  state.dodgeStreak = 0;
   triggerHitFeedback(hitX, hitY, timestamp);
   playSound('hit');
   updateHud(timestamp);
@@ -539,10 +636,19 @@ function updateFallingItems(deltaSeconds, timestamp) {
   state.hazards = state.hazards.filter((hazard) => {
     moveItem(hazard, deltaSeconds);
 
-    if (rectanglesOverlap(playerRect, getItemRect(hazard))) {
+    if (playerCollidesWith(hazard)) {
       hitPlayer(hazard, timestamp);
       hazard.element.remove();
       return false;
+    }
+
+    if (!hazard.scored && hazard.y > playerRect.y + playerRect.height) {
+      hazard.scored = true;
+      state.dodgeStreak += 1;
+      if (state.dodgeStreak % 4 === 0) {
+        addComboStep(1);
+        addScore(8 * getMultiplier());
+      }
     }
 
     if (hazard.y > gameHeight + hazard.height) {
@@ -556,7 +662,7 @@ function updateFallingItems(deltaSeconds, timestamp) {
   state.orbs = state.orbs.filter((orb) => {
     moveItem(orb, deltaSeconds);
 
-    if (rectanglesOverlap(playerRect, getItemRect(orb))) {
+    if (playerCollidesWith(orb)) {
       collectOrb(orb);
       return false;
     }
@@ -575,12 +681,27 @@ function updateLevel(timestamp) {
   if (nextLevel !== state.level) {
     state.level = nextLevel;
     addScore(100 * state.level);
+    showLevelToast();
   }
+}
+
+function showLevelToast() {
+  levelToastElement.textContent = `Level ${state.level}`;
+  levelToastElement.hidden = false;
+  levelToastElement.classList.remove('is-visible');
+  void levelToastElement.offsetWidth;
+  levelToastElement.classList.add('is-visible');
+  window.setTimeout(() => {
+    levelToastElement.classList.remove('is-visible');
+    if (state.mode !== 'playing') {
+      levelToastElement.hidden = true;
+    }
+  }, 1200);
 }
 
 function updateScoreOverTime(timestamp) {
   if (timestamp - state.lastScoreTime >= 1000) {
-    addScore(state.level);
+    addScore(state.level * getMultiplier());
     state.lastScoreTime = timestamp;
   }
 }
@@ -644,23 +765,27 @@ function beginCountdown() {
   state.mode = 'countdown';
   state.countdownValue = 3;
   countdownElement.hidden = false;
+  countdownElement.classList.remove('is-subtle');
   countdownElement.textContent = '3';
 
   window.clearInterval(state.countdownTimer);
   state.countdownTimer = window.setInterval(() => {
     state.countdownValue -= 1;
     if (state.countdownValue > 0) {
+      countdownElement.classList.remove('is-subtle');
       countdownElement.textContent = String(state.countdownValue);
       return;
     }
 
     if (state.countdownValue === 0) {
       countdownElement.textContent = 'oeeco';
+      countdownElement.classList.add('is-subtle');
       return;
     }
 
     window.clearInterval(state.countdownTimer);
     countdownElement.hidden = true;
+    countdownElement.classList.remove('is-subtle');
     startPlaying();
   }, 760);
 }
@@ -683,12 +808,14 @@ function resetRunState(now) {
   state.combo = 1;
   state.level = 1;
   state.hasShield = false;
+  state.speedBoostUntil = 0;
+  state.dodgeStreak = 0;
   state.invulnerableUntil = now + 1200;
   state.dashReadyAt = now;
   state.dashUntil = 0;
   state.pausedAt = 0;
   newBestMessage.hidden = true;
-  player.classList.remove('is-hit', 'is-dashing', 'has-shield');
+  player.classList.remove('is-hit', 'is-dashing', 'has-shield', 'has-boost');
   gameArea.classList.remove('is-shaking');
   resetPlayerPosition();
   updateHud(now);
@@ -743,6 +870,7 @@ function resumeGame() {
   state.invulnerableUntil += pausedDuration;
   state.dashReadyAt += pausedDuration;
   state.dashUntil += pausedDuration;
+  state.speedBoostUntil += pausedDuration;
   state.warnings.forEach((warning) => { warning.removeAt += pausedDuration; });
   state.pendingWaves.forEach((wave) => { wave.executeAt += pausedDuration; });
   state.pausedAt = 0;
